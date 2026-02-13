@@ -24,9 +24,22 @@ unsigned long lastAlertTime = 0;
 unsigned long lastBotCheck = 0;
 unsigned long lastSensorCheck = 0;
 const unsigned long BOT_CHECK_INTERVAL = 1000;  // Check for messages every 1 second
-bool waterDetected = false; // Start assuming no water
+bool tankEmpty = false; // Start assuming tank has water
 // Configuration values are provided in include/config.h:
-// SENSOR_PIN, SENSOR_THRESHOLD, CHECK_INTERVAL, DEBOUNCE_TIME
+// SENSOR_PIN, CHECK_INTERVAL, DEBOUNCE_TIME
+// XKC-Y25-PNP: analog read since output is very weak (~0.02V)
+
+// Read sensor once and return both raw value and wet status
+int lastSensorRaw = 0;
+
+int readSensor() {
+  lastSensorRaw = analogRead(SENSOR_PIN);
+  return lastSensorRaw;
+}
+
+bool isWet(int raw) {
+  return raw <= SENSOR_THRESHOLD;
+}
 
 void connectToWiFi() {
   Serial.print("Connecting to WiFi");
@@ -114,20 +127,19 @@ void handleNewMessages(int numNewMessages) {
     text.toLowerCase();
     
     if (text == "test" || text == "/test") {
-      // Read current sensor value
-      int sensorValue = analogRead(SENSOR_PIN);
-      bool isWet = (sensorValue > SENSOR_THRESHOLD);
-      
+      // Read current sensor value (XKC-Y25-PNP: analog read)
+      int raw = readSensor();
+      bool wet = isWet(raw);
+
       String response = "📊 Current Sensor Reading:\n";
-      response += "• Value: " + String(sensorValue) + "\n";
-      response += "• Status: " + String(isWet ? "WET 💦" : "DRY ✅") + "\n";
-      response += "• Threshold: " + String(SENSOR_THRESHOLD);
+      response += "• Raw ADC: " + String(raw) + " (threshold: " + String(SENSOR_THRESHOLD) + ")\n";
+      response += "• Status: " + String(wet ? "FULL 💧" : "EMPTY ⚠️");
       
       bot.sendMessage(chat_id, response, "");
       Serial.println("Sent sensor reading response");
     } else if (text == "help" || text == "/help" || text == "/start") {
-      String helpMsg = "🤖 Water Sensor Bot Commands:\n";
-      helpMsg += "• test - Get current sensor reading\n";
+      String helpMsg = "🤖 Water Tank Bot Commands:\n";
+      helpMsg += "• test - Get current tank level reading\n";
       helpMsg += "• help - Show this help message";
       bot.sendMessage(chat_id, helpMsg, "");
     }
@@ -137,8 +149,9 @@ void handleNewMessages(int numNewMessages) {
 void checkTelegramMessages() {
   if (millis() - lastBotCheck > BOT_CHECK_INTERVAL) {
     int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
-    if (numNewMessages) {
+    while (numNewMessages) {
       handleNewMessages(numNewMessages);
+      numNewMessages = bot.getUpdates(bot.last_message_received + 1);
     }
     lastBotCheck = millis();
   }
@@ -153,47 +166,27 @@ void setup() {
   connectToWiFi();
 
   // Send a startup message so you know it works
-  sendTelegramMessage("💧 Water Sensor System is Online!");
+  sendTelegramMessage("💧 Water Tank Monitor is Online!");
 
-  // Startup test phase: check sensor every 10 seconds for 1 minute
-  Serial.println("\n=== Starting 1-minute sensor test phase ===");
-  sendTelegramMessage("🔬 Starting 1-minute sensor test (readings every 10 sec)");
-  
-  const unsigned long testDuration = 1 * 60 * 1000;  // 1 minutes in milliseconds
-  const unsigned long testInterval = 10 * 1000;       // 10 seconds in milliseconds
+  // Startup test phase: continuous serial output for 2 minutes
+  Serial.println("\n=== Starting 2-minute continuous sensor test (serial only) ===");
+  Serial.println("Time(s) | ADC Raw | Threshold | Status");
+  Serial.println("--------|---------|-----------|-------");
+  sendTelegramMessage("🔬 Starting 2-min sensor test (check serial monitor)");
+
+  const unsigned long testDuration = 2 * 60 * 1000;  // 2 minutes
+  const unsigned long testInterval = 500;              // every 500ms
   unsigned long testStartTime = millis();
-  int readingCount = 0;
-  
+
   while (millis() - testStartTime < testDuration) {
-    readingCount++;
-    int sensorValue = analogRead(SENSOR_PIN);
-    bool isWet = (sensorValue > SENSOR_THRESHOLD);
-    
-    String statusMsg = "📊 Test #" + String(readingCount) + 
-                       " | Value: " + String(sensorValue) + 
-                       " | Status: " + (isWet ? "WET 💦" : "DRY ✅") +
-                       " | Threshold: " + String(SENSOR_THRESHOLD);
-    
-    Serial.println(statusMsg);
-    sendTelegramMessage(statusMsg);
-    
-    // Wait 30 seconds before next reading (unless test period is over)
-    unsigned long elapsed = millis() - testStartTime;
-    unsigned long waitTime = 0;
+    int raw = readSensor();
+    float elapsed = (millis() - testStartTime) / 1000.0;
 
-    if (elapsed + testInterval < testDuration) {
-      waitTime = testInterval;
-    } else {
-      if (testDuration > elapsed) waitTime = testDuration - elapsed;
-    }
+    Serial.printf("%7.1f | %7d | %9d | %s\n", elapsed, raw, SENSOR_THRESHOLD, isWet(raw) ? "FULL" : "EMPTY");
 
-    unsigned long waitStart = millis();
-    while (millis() - waitStart < waitTime) {
-      checkTelegramMessages();
-      delay(20);
-    }
+    delay(testInterval);
   }
-  
+
   Serial.println("=== Sensor test phase complete ===\n");
   sendTelegramMessage("✅ Test phase complete! Switching to normal monitoring mode.");
 }
@@ -206,29 +199,26 @@ void loop() {
   if (millis() - lastSensorCheck > CHECK_INTERVAL) {
     lastSensorCheck = millis();
 
-    int sensorValue = analogRead(SENSOR_PIN);
-    bool isWet = (sensorValue > SENSOR_THRESHOLD);
+    int raw = readSensor();
+    bool wet = isWet(raw);
 
-    // Debug printing (optional, helps tuning)
-    // Serial.printf("Value: %d | Wet: %s\n", sensorValue, isWet ? "YES" : "NO");
+    // Debug printing
+    Serial.printf("Sensor pin %d | ADC: %d (threshold: %d) | Wet: %s\n", SENSOR_PIN, raw, SENSOR_THRESHOLD, wet ? "YES" : "NO");
 
-    // 2. Alert Logic
-    if (isWet) {
-      // If this is a NEW detection (or enough time passed since last alert)
-      if (!waterDetected || (millis() - lastAlertTime > DEBOUNCE_TIME)) {
-        
-        Serial.println("ALARM: WATER DETECTED!");
-        sendTelegramMessage("🚨 ALERT! Water leak detected! (Sensor Value: " + String(sensorValue) + ")");
-        
-        waterDetected = true;
+    // 2. Alert Logic — alert when tank is empty (dry)
+    if (!wet) {
+      if (!tankEmpty || (millis() - lastAlertTime > DEBOUNCE_TIME)) {
+        Serial.println("ALARM: TANK EMPTY!");
+        sendTelegramMessage("🚨 ALERT! Water tank is empty!");
+
+        tankEmpty = true;
         lastAlertTime = millis();
       }
     } else {
-      // If sensor is dry, reset the flag so we can alert again instantly if water returns
-      if (waterDetected) {
-        Serial.println("Water cleared.");
-        sendTelegramMessage("✅ Water has cleared. Sensor is dry.");
-        waterDetected = false;
+      if (tankEmpty) {
+        Serial.println("Tank refilled.");
+        sendTelegramMessage("✅ Water tank has been refilled.");
+        tankEmpty = false;
       }
     }
   }

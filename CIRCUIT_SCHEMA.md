@@ -3,54 +3,81 @@
 ## System Overview
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                                                               │
-│                    ESP32-WROOM-32D                           │
-│                   ┌──────────────────┐                       │
-│                   │                  │                       │
-│              GND  │  ●●●●●●●●●●●●●  │  3V3/5V              │
-│               │   │  ●●●●●●●●●●●●●  │    │                 │
-│               │   │                  │    │                 │
-│               │   │  GPIO 34 (ADC0)  │    │                 │
-│               │   │       ●          │    │                 │
-│               │   └──────────────────┘    │                 │
-│               │                           │                 │
-│               │                           │                 │
-│               └───────┬─────────────────────┘               │
-│                       │                                      │
-│                       │ GND (0V)                            │
-└───────────────────────┼──────────────────────────────────────┘
-                        │
-                        │
-        ┌───────────────┼────────────────┐
-        │               │                │
-        │        ┌──────────────────┐    │
-        │        │  Water Sensor    │    │
-        │        │  (Elegoo)        │    │
-        │        │                  │    │
-        │     VCC│  ●  S  GND  ●    │    │
-        │        │  │   │   │       │    │
-        │        │  │   │   │       │    │
-        │        └──┼───┼───┼───────┘    │
-        │           │   │   │            │
-        │           │   │   └────────────┼── ESP32 GND
-        │           │   │                │
-        │           │   └────────────────┼── ESP32 GPIO 34 (ADC)
-        │           │                    │
-        │           └────────────────────┼── ESP32 5V or 3.3V
-        │                                │
-        └────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│                                                                     │
+│                      ESP32-WROOM-32D                               │
+│                     ┌──────────────────┐                           │
+│                     │                  │                           │
+│                GND  │  ●●●●●●●●●●●●●  │  5V                      │
+│                 │   │  ●●●●●●●●●●●●●  │   │                      │
+│                 │   │                  │   │                      │
+│                 │   │  GPIO 34 (IN)    │   │                      │
+│                 │   │       ●          │   │                      │
+│                 │   └──────────────────┘   │                      │
+│                 │          │               │                      │
+│                 │          │               │                      │
+│                 │          │ (via voltage  │                      │
+│                 │          │  divider)     │                      │
+│                 │          │               │                      │
+│                 │    ┌─────┘               │                      │
+│                 │    │                     │                      │
+│                 │   [10kΩ] R1             │                      │
+│                 │    │                     │                      │
+│                 │    ├──── Signal ──────── XKC-Y25-PNP (Yellow)  │
+│                 │    │                     │                      │
+│                 │   [20kΩ] R2             │                      │
+│                 │    │                     │                      │
+│                 │    └──── GND            │                      │
+│                 │          │               │                      │
+│                 └──────────┤               │                      │
+│                            │               │                      │
+│           XKC-Y25-PNP GND ┘               │                      │
+│           (Blue/Black)        XKC-Y25-PNP VCC (Brown/Red)        │
+│                                            │                      │
+└────────────────────────────────────────────┘                      │
+                                                                     │
+  ┌──────────────────────────────────┐                               │
+  │   XKC-Y25-PNP Sensor            │                               │
+  │   (Non-Contact Capacitive)      │                               │
+  │                                  │                               │
+  │   Brown/Red ── VCC (5V-24V)  ───┼───────────────────────────────┘
+  │   Yellow    ── Signal (OUT)     │
+  │   Blue/Black── GND             │
+  │                                  │
+  │   ┌────────────┐                │
+  │   │ ~~~~~~~~   │ ← Mount flat  │
+  │   │ ~ Water ~  │   against     │
+  │   │ ~~~~~~~~   │   tank wall   │
+  │   └────────────┘                │
+  └──────────────────────────────────┘
+```
+
+## Voltage Divider Detail
+
+The XKC-Y25-PNP outputs ~5V HIGH when water is detected. ESP32 GPIOs are
+**3.3V tolerant only**, so a voltage divider is **required**:
+
+```
+  XKC-Y25-PNP Signal (Yellow) ──┬── [10kΩ R1] ── ESP32 GPIO 34
+                                 │
+                                [20kΩ R2]
+                                 │
+                                GND
+
+  Output at GPIO 34: 5V × 20k / (10k + 20k) = 3.33V ✓
 ```
 
 ## Detailed Wiring
 
-### ESP32 WROOM-32D to Elegoo Water Sensor
+### ESP32 WROOM-32D to XKC-Y25-PNP Sensor
 
 | Component | ESP32 Pin | Wire Color (Suggested) | Function |
 |-----------|-----------|--------|----------|
-| Water Sensor VCC | 5V or 3.3V | Red | Power Supply |
-| Water Sensor S (Signal) | GPIO 34 | Yellow | Analog Input |
-| Water Sensor GND | GND | Black | Ground Reference |
+| Sensor VCC (Brown/Red) | 5V | Red | Power Supply (5V required) |
+| Sensor Signal (Yellow) | GPIO 34 via voltage divider | Yellow | Digital Input (HIGH=water) |
+| Sensor GND (Blue/Black) | GND | Black | Ground Reference |
+| Voltage Divider R1 (10kΩ) | Between sensor signal & GPIO 34 | — | Level shifting |
+| Voltage Divider R2 (20kΩ) | Between GPIO 34 & GND | — | Level shifting |
 
 ### ESP32 WROOM-32D Pinout
 
@@ -87,23 +114,25 @@
 ## Component Specifications
 
 ### ESP32-WROOM-32D
-- **Operating Voltage**: 3.3V (5V tolerant on most GPIO pins)
-- **ADC Input Range**: 0-3.3V
-- **GPIO 34**: ADC0 (Analog-to-Digital Converter channel 0)
+- **Operating Voltage**: 3.3V (GPIOs are **NOT** 5V tolerant)
+- **GPIO 34**: Input-only pin, used as digital input
 - **Features**: WiFi, Bluetooth, 240MHz dual-core processor
 
-### Elegoo Water Sensor
-- **Operating Voltage**: 3.3V - 5V
-- **Output Type**: Analog (0-3.3V or 0-5V depending on power)
-- **Detection Range**: 0-100% water content
-- **Response Time**: ~100ms
+### XKC-Y25-PNP Non-Contact Water Level Sensor
+- **Operating Voltage**: 5V - 24V DC
+- **Output Type**: Digital (PNP — HIGH when water detected, LOW when dry)
+- **Detection**: Capacitive, through container wall (up to ~20mm non-metallic)
+- **Response Time**: ~500ms
+- **Mounting**: Flat against outside of tank/pipe wall (non-metallic only)
+- **Wire Colors**: Brown/Red = VCC, Yellow = Signal, Blue/Black = GND
 
 ### Connection Notes
-- GPIO 34 is an **input-only** ADC pin (no output capability)
-- Maximum safe voltage on GPIO 34: 3.6V
-- If using 5V sensor power, connect through resistor divider or use 3.3V directly
-- Keep wires short to minimize noise on analog signal
-- For stable readings, add a 100nF capacitor between sensor signal and GND near the ESP32
+- GPIO 34 is an **input-only** pin (no output capability) — perfect for sensor input
+- Maximum safe voltage on GPIO 34: **3.6V** — voltage divider is **mandatory** with 5V sensor
+- The voltage divider (10kΩ + 20kΩ) brings 5V signal down to ~3.33V (safe for ESP32)
+- Mount the XKC-Y25-PNP flat against the tank wall at the desired detection level
+- Works through non-metallic walls only (plastic, glass, ceramic) up to ~20mm thick
+- Keep signal wires short and away from motor/relay interference
 
 ## Power Supply Options
 
@@ -123,36 +152,35 @@
 - Voltage regulator to 5V for ESP32
 - Enables months of monitoring with solar charging
 
-## Sensor Calibration Setup
+## Sensor Setup
 
-For accurate water detection, calibrate in two states:
+The XKC-Y25-PNP is a digital sensor — **no calibration needed**.
+
+1. Mount the sensor flat against the outside of the tank/pipe wall
+2. Secure it at the water level you want to monitor
+3. The sensor has a built-in sensitivity potentiometer (small screw) — adjust if needed
+4. Verify via Serial Monitor: should read HIGH with water, LOW without
 
 ```
-State 1: Sensor in Air
-└─ Read ADC value: ~1000-2000 (depends on humidity)
-
-State 2: Sensor in Water
-└─ Read ADC value: ~2500-3500 (depends on water conductivity)
-
-Threshold = (Air Value + Water Value) / 2
+Water present  → Sensor output: HIGH → ESP32 reads HIGH (~3.3V via divider)
+No water       → Sensor output: LOW  → ESP32 reads LOW  (0V)
 ```
-
-Monitor Serial output and adjust `SENSOR_THRESHOLD` in config.h accordingly.
 
 ## Safety Considerations
 
-1. **Water Exposure**: Do NOT submerge ESP32 itself - only the sensor probe
-2. **Electrical Safety**: Keep electrical components away from water tank contact area
-3. **WiFi**: Ensure adequate antenna clearance (keep away from metal)
-4. **Enclosure**: House ESP32 in waterproof container away from splash zone
-5. **Ventilation**: Allow airflow in enclosure to prevent condensation
+1. **Non-Contact Sensor**: The XKC-Y25-PNP mounts outside the tank — no water contact needed
+2. **Wall Material**: Only works through non-metallic walls (plastic, glass, ceramic)
+3. **Voltage Divider**: REQUIRED — do not connect 5V signal directly to ESP32 GPIO
+4. **WiFi**: Ensure adequate antenna clearance (keep away from metal)
+5. **Enclosure**: House ESP32 in waterproof container if in a wet environment
+6. **Ventilation**: Allow airflow in enclosure to prevent condensation
 
 ## Testing Checklist
 
 - [ ] ESP32 USB connection recognized by computer
 - [ ] Serial Monitor shows boot messages at 115200 baud
-- [ ] Sensor values displayed in Serial Monitor
+- [ ] Voltage divider wired correctly (measure ~3.3V at GPIO 34 when sensor is HIGH)
+- [ ] Sensor reads HIGH when water present, LOW when dry
 - [ ] WiFi connects successfully
-- [ ] Sensor threshold properly calibrated
-- [ ] Test email alert with manual trigger
+- [ ] Telegram alert received on water detection
 - [ ] Verify automatic reconnection after WiFi loss

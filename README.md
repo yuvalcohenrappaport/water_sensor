@@ -1,6 +1,6 @@
 # ESP32 Water Sensor Alert System
 
-A smart water leak detection system that uses an ESP32-WROOM-32D microcontroller and an Elegoo water sensor to send **Telegram alerts** when water is detected.
+A smart water level monitoring system that uses an ESP32-WROOM-32D microcontroller and an **XKC-Y25-PNP non-contact capacitive sensor** to send **Telegram alerts** when water is (or isn't) detected.
 
 ## Features
 
@@ -13,20 +13,25 @@ A smart water leak detection system that uses an ESP32-WROOM-32D microcontroller
 ## Components Required
 
 - **ESP32-WROOM-32D**: Main microcontroller
-- **Elegoo Water Sensor**: Analog water level detection sensor
+- **XKC-Y25-PNP**: Non-contact capacitive water level sensor
+- **10kΩ Resistor**: For voltage divider (signal line)
+- **20kΩ Resistor**: For voltage divider (signal line)
 - **Micro USB Cable**: For ESP32 programming and power
 - **Jumper Wires**: For connections
 - **Power Supply**: 5V USB or external power
 
 ## Wiring
 
-Connect the Elegoo water sensor to the ESP32:
+Connect the XKC-Y25-PNP to the ESP32 **with a voltage divider** on the signal line:
 
-| Elegoo Sensor | ESP32 Pin |
-|---------------|-----------|
-| VCC           | 3.3V      |
-| GND           | GND       |
-| S (Signal)    | GPIO 34   |
+| XKC-Y25-PNP Wire | Connection |
+|-------------------|------------|
+| Brown/Red (VCC)   | ESP32 5V   |
+| Blue/Black (GND)  | ESP32 GND  |
+| Yellow (Signal)   | → 10kΩ resistor → ESP32 GPIO 34 |
+|                   | GPIO 34 → 20kΩ resistor → GND |
+
+> ⚠️ **The voltage divider is required!** The sensor outputs 5V but ESP32 GPIOs only tolerate 3.3V.
 
 ## Setup Instructions
 
@@ -55,25 +60,21 @@ Edit [include/config.h](include/config.h) with your settings:
 #define BOT_TOKEN "YOUR_BOT_TOKEN"    // From BotFather
 #define CHAT_ID "YOUR_CHAT_ID"        // From myidbot
 
-// Sensor Configuration
-#define SENSOR_PIN 34              // ADC pin (GPIO34)
-#define SENSOR_THRESHOLD 10        // Adjust based on calibration
+// Sensor Configuration (XKC-Y25-PNP digital sensor)
+#define SENSOR_PIN 34              // Digital input pin (GPIO34)
 #define CHECK_INTERVAL 300000      // Check every 5 minutes (ms)
 #define DEBOUNCE_TIME 60000        // Min time between alerts (ms)
 ```
 
-### 4. Calibrate the Sensor
+### 4. Mount & Verify the Sensor
 
-1. Flash the code to the ESP32
-2. Open the Serial Monitor (115200 baud)
-3. Note the sensor values when dry (usually 0)
-4. Dip the sensor in water and note the value
-5. Set `SENSOR_THRESHOLD` between dry and wet readings
+1. Mount the XKC-Y25-PNP flat against the outside of the tank wall
+2. Flash the code and open Serial Monitor (115200 baud)
+3. Verify: with water at sensor level → reads HIGH
+4. Verify: without water at sensor level → reads LOW
+5. Adjust the sensor's built-in sensitivity potentiometer if needed
 
-Example:
-- Dry: 0
-- Wet: 100+
-- Threshold: 10
+> No threshold calibration needed — the XKC-Y25-PNP is a digital (on/off) sensor.
 
 ### 5. Build and Upload
 
@@ -131,10 +132,11 @@ Water Cleared  → ✅ Clear notification sent
 - Ensure 2.4GHz network (ESP32 doesn't support 5GHz)
 - Check Serial Monitor for connection status
 
-### Sensor readings inconsistent
-- Clean the sensor contacts
-- Recalibrate threshold in config.h
-- Ensure proper wiring and voltage
+### Sensor readings incorrect
+- Verify the voltage divider is wired correctly (measure ~3.3V at GPIO 34 when HIGH)
+- Ensure sensor is mounted flat against a non-metallic wall
+- Adjust the sensor's built-in sensitivity potentiometer
+- Ensure proper 5V power supply to the sensor
 
 ### ESP32 won't upload
 - Hold BOOT button while uploading starts
@@ -145,8 +147,7 @@ Water Cleared  → ✅ Clear notification sent
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `SENSOR_PIN` | 34 | ADC pin for water sensor |
-| `SENSOR_THRESHOLD` | 10 | Water detection threshold |
+| `SENSOR_PIN` | 34 | Digital input pin for water sensor |
 | `CHECK_INTERVAL` | 300000 | Sensor check interval (5 min) |
 | `DEBOUNCE_TIME` | 60000 | Min time between alerts (1 min) |
 | `BOT_CHECK_INTERVAL` | 1000 | Telegram polling interval (1 sec) |
