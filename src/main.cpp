@@ -23,7 +23,12 @@ UniversalTelegramBot bot(BOT_TOKEN, client);
 unsigned long lastAlertTime = 0;
 unsigned long lastBotCheck = 0;
 unsigned long lastSensorCheck = 0;
+unsigned long lastKeepAlive = 0;
+unsigned long bootTime = 0;
 const unsigned long BOT_CHECK_INTERVAL = 1000;  // Check for messages every 1 second
+const unsigned long KEEPALIVE_EARLY = 15 * 60 * 1000;    // Every 15 min for first 2 hours
+const unsigned long KEEPALIVE_NORMAL = 3 * 60 * 60 * 1000; // Every 3 hours after that
+const unsigned long KEEPALIVE_EARLY_END = 2 * 60 * 60 * 1000; // 2 hours
 bool tankEmpty = false; // Start assuming tank has water
 // Configuration values are provided in include/config.h:
 // SENSOR_PIN, CHECK_INTERVAL, DEBOUNCE_TIME
@@ -189,6 +194,9 @@ void setup() {
 
   Serial.println("=== Sensor test phase complete ===\n");
   sendTelegramMessage("✅ Test phase complete! Switching to normal monitoring mode.");
+
+  bootTime = millis();
+  lastKeepAlive = millis();
 }
 
 void loop() {
@@ -221,5 +229,19 @@ void loop() {
         tankEmpty = false;
       }
     }
+  }
+
+  // 3. Keep-alive message
+  unsigned long uptime = millis() - bootTime;
+  unsigned long keepAliveInterval = (uptime < KEEPALIVE_EARLY_END) ? KEEPALIVE_EARLY : KEEPALIVE_NORMAL;
+  if (millis() - lastKeepAlive > keepAliveInterval) {
+    lastKeepAlive = millis();
+    int raw = readSensor();
+    unsigned long hours = uptime / 3600000;
+    unsigned long mins = (uptime % 3600000) / 60000;
+    String msg = "💓 Keep-alive | Uptime: " + String(hours) + "h " + String(mins) + "m";
+    msg += " | Tank: " + String(isWet(raw) ? "FULL" : "EMPTY");
+    msg += " | ADC: " + String(raw);
+    sendTelegramMessage(msg);
   }
 }
