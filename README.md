@@ -1,14 +1,17 @@
 # ESP32 Water Sensor Alert System
 
-A smart water level monitoring system that uses an ESP32-WROOM-32D microcontroller and an **XKC-Y25-PNP non-contact capacitive sensor** to send **Telegram alerts** when water is (or isn't) detected.
+A smart water tank level monitoring system that uses an ESP32-WROOM-32D microcontroller and an **XKC-Y25-PNP non-contact capacitive sensor** to send **Telegram alerts** when the water tank is empty.
 
 ## Features
 
-- 🚨 **Instant Telegram Alerts** - Get notified immediately when water is detected
-- 📊 **On-Demand Readings** - Send "test" to the bot to get current sensor status
+- 🚨 **Instant Telegram Alerts** - Get notified when the water tank is empty
+- 📊 **On-Demand Readings** - Send "test" to the bot to get current tank level
+- 💓 **Keep-Alive Messages** - Periodic heartbeat with uptime and tank status
+- ⏱ **Adjustable Timer** - Change keep-alive interval via Telegram command
 - 💡 **LED Feedback** - Built-in LED flashes when messages are received
 - 🔄 **Auto-Reconnect** - Automatically reconnects WiFi if connection is lost
-- 🧪 **Startup Test Phase** - 1-minute test with readings every 10 seconds on boot
+- 🔒 **Security** - Chat ID authorization and rate limiting
+- 🧪 **Startup Test Phase** - 2-minute test with readings every 500ms on boot
 
 ## Components Required
 
@@ -60,8 +63,9 @@ Edit [include/config.h](include/config.h) with your settings:
 #define BOT_TOKEN "YOUR_BOT_TOKEN"    // From BotFather
 #define CHAT_ID "YOUR_CHAT_ID"        // From myidbot
 
-// Sensor Configuration (XKC-Y25-PNP digital sensor)
-#define SENSOR_PIN 34              // Digital input pin (GPIO34)
+// Sensor Configuration (XKC-Y25-PNP via analogRead)
+#define SENSOR_PIN 34              // Analog input pin (GPIO34 / ADC1_CH6)
+#define SENSOR_THRESHOLD 10        // ADC <= 10 = water present, > 10 = empty
 #define CHECK_INTERVAL 300000      // Check every 5 minutes (ms)
 #define DEBOUNCE_TIME 60000        // Min time between alerts (ms)
 ```
@@ -95,24 +99,26 @@ pio device monitor -b 115200
 
 | Command | Description |
 |---------|-------------|
-| `test` or `/test` | Get current sensor reading |
+| `test` or `/test` | Get current tank level reading (ADC value + status) |
+| `change timer_[min]` | Set keep-alive interval in minutes (e.g. `change timer_30`) |
 | `help` or `/help` | Show available commands |
 | `/start` | Welcome message with commands |
 
 ## How It Works
 
 1. **Startup**: System connects to WiFi and syncs time via NTP
-2. **Test Phase**: Runs a 1-minute test with readings every 10 seconds
+2. **Test Phase**: Runs a 2-minute test with readings every 500ms (serial output)
 3. **Monitoring**: Checks sensor every 5 minutes (configurable)
-4. **Alerts**: Sends Telegram message when water is detected
-5. **Clear Notification**: Notifies when water clears
-6. **Interactive**: Responds to Telegram commands anytime
+4. **Alerts**: Sends Telegram alert when tank is empty
+5. **Refill Notification**: Notifies when tank is refilled
+6. **Keep-Alive**: Sends periodic heartbeat messages (default: every 15 min for first 2 hours, then every 3 hours). Can be changed via `change timer_[min]` command.
+7. **Interactive**: Responds to Telegram commands anytime
 
 ### Alert Flow
 
 ```
-Water Detected → 🚨 ALERT sent to Telegram
-Water Cleared  → ✅ Clear notification sent
+Tank Empty   → 🚨 ALERT sent to Telegram
+Tank Refilled → ✅ Refill notification sent
 ```
 
 ## LED Behavior
@@ -147,7 +153,8 @@ Water Cleared  → ✅ Clear notification sent
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `SENSOR_PIN` | 34 | Digital input pin for water sensor |
+| `SENSOR_PIN` | 34 | Analog input pin for water sensor (ADC1_CH6) |
+| `SENSOR_THRESHOLD` | 10 | ADC threshold (<=10 = water, >10 = empty) |
 | `CHECK_INTERVAL` | 300000 | Sensor check interval (5 min) |
 | `DEBOUNCE_TIME` | 60000 | Min time between alerts (1 min) |
 | `BOT_CHECK_INTERVAL` | 1000 | Telegram polling interval (1 sec) |

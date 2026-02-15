@@ -30,6 +30,11 @@ const unsigned long KEEPALIVE_EARLY = 15 * 60 * 1000;    // Every 15 min for fir
 const unsigned long KEEPALIVE_NORMAL = 3 * 60 * 60 * 1000; // Every 3 hours after that
 const unsigned long KEEPALIVE_EARLY_END = 2 * 60 * 60 * 1000; // 2 hours
 bool tankEmpty = false; // Start assuming tank has water
+unsigned long keepAliveOverride = 0; // 0 = use default schedule, >0 = custom interval in ms
+// Rate limiting: max 10 messages per minute from any user
+int msgCount = 0;
+unsigned long msgWindowStart = 0;
+const int MAX_MSGS_PER_MINUTE = 10;
 // Configuration values are provided in include/config.h:
 // SENSOR_PIN, CHECK_INTERVAL, DEBOUNCE_TIME
 // XKC-Y25-PNP: analog read since output is very weak (~0.02V)
@@ -122,15 +127,33 @@ void handleNewMessages(int numNewMessages) {
     String chat_id = bot.messages[i].chat_id;
     String text = bot.messages[i].text;
     String from_name = bot.messages[i].from_name;
-    
+
+    // Security: only allow authorized chat ID
+    if (chat_id != CHAT_ID) {
+      Serial.println("Unauthorized message from " + from_name + " (chat_id: " + chat_id + ")");
+      bot.sendMessage(chat_id, "⛔ Unauthorized. Access denied.", "");
+      continue;
+    }
+
+    // Rate limiting: reset window every 60 seconds
+    if (millis() - msgWindowStart > 60000) {
+      msgCount = 0;
+      msgWindowStart = millis();
+    }
+    msgCount++;
+    if (msgCount > MAX_MSGS_PER_MINUTE) {
+      Serial.println("Rate limit exceeded, ignoring message");
+      continue;
+    }
+
     Serial.println("Message received from " + from_name + ": " + text);
-    
+
     // Flash LED 3 times when any message is received
     flashLED(3);
-    
+
     // Convert to lowercase for case-insensitive comparison
     text.toLowerCase();
-    
+
     if (text == "test" || text == "/test") {
       // Read current sensor value (XKC-Y25-PNP: analog read)
       int raw = readSensor();
@@ -142,9 +165,21 @@ void handleNewMessages(int numNewMessages) {
       
       bot.sendMessage(chat_id, response, "");
       Serial.println("Sent sensor reading response");
+    } else if (text.startsWith("change timer_")) {
+      int minutes = text.substring(13).toInt();
+      if (minutes > 0) {
+        keepAliveOverride = (unsigned long)minutes * 60 * 1000;
+        String response = "⏱ Keep-alive interval changed to " + String(minutes) + " minute(s).";
+        bot.sendMessage(chat_id, response, "");
+        Serial.println("Keep-alive interval changed to " + String(minutes) + " minutes");
+        lastKeepAlive = millis(); // Reset timer so new interval starts now
+      } else {
+        bot.sendMessage(chat_id, "❌ Invalid timer value. Use: change timer_[minutes]\nExample: change timer_30", "");
+      }
     } else if (text == "help" || text == "/help" || text == "/start") {
       String helpMsg = "🤖 Water Tank Bot Commands:\n";
       helpMsg += "• test - Get current tank level reading\n";
+      helpMsg += "• change timer_[min] - Set keep-alive interval (e.g. change timer_30)\n";
       helpMsg += "• help - Show this help message";
       bot.sendMessage(chat_id, helpMsg, "");
     }
@@ -233,7 +268,8 @@ void loop() {
 
   // 3. Keep-alive message
   unsigned long uptime = millis() - bootTime;
-  unsigned long keepAliveInterval = (uptime < KEEPALIVE_EARLY_END) ? KEEPALIVE_EARLY : KEEPALIVE_NORMAL;
+  unsigned long keepAliveInterval = (keepAliveOverride > 0) ? keepAliveOverride :
+    ((uptime < KEEPALIVE_EARLY_END) ? KEEPALIVE_EARLY : KEEPALIVE_NORMAL);
   if (millis() - lastKeepAlive > keepAliveInterval) {
     lastKeepAlive = millis();
     int raw = readSensor();
